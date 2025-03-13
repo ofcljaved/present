@@ -73,25 +73,28 @@ M.start_presentation = function(opts)
   local lines = vim.api.nvim_buf_get_lines(opts.bufnr, 0, -1, false)
   local parsed = parsed_slides(lines)
   local float = create_floating_window()
+  local km = vim.keymap
+  local current_slide = 1
 
-  local set_keymap = function(opts)
-    local current_slide = 1
-    -- if opts.number > 0 then
-    --   current_slide = math.min(current_slide + 1, #parsed.slides)
-    -- else
-    --   current_slide = math.max(current_slide - 1, 1)
-    -- end
-    current_slide = current_slide + opts.number
-    current_slide = math.max(1, math.min(current_slide, #parsed.slides))
-    vim.keymap.set("n", opts.key, function()
-      vim.api.nvim_buf_set_lines(float.buf, 0, -1, false, parsed.slides[current_slide])
-    end, {
-      buffer = float.buf
-    })
-  end
+  km.set("n", "n", function()
+    current_slide = math.min(current_slide + 1, #parsed.slides)
+    vim.api.nvim_buf_set_lines(float.buf, 0, -1, false, parsed.slides[current_slide])
+  end, {
+    buffer = float.buf
+  })
 
-  set_keymap { key = "n", number = 1 }
-  set_keymap { key = "p", number = -1 }
+  km.set("n", "p", function()
+    current_slide = math.max(current_slide - 1, 1)
+    vim.api.nvim_buf_set_lines(float.buf, 0, -1, false, parsed.slides[current_slide])
+  end, {
+    buffer = float.buf
+  })
+
+  km.set("n", "q", function()
+    vim.api.nvim_win_close(float.win, true)
+  end, {
+    buffer = float.buf
+  })
 
   vim.api.nvim_buf_set_lines(float.buf, 0, -1, false, parsed.slides[1])
 end
@@ -103,5 +106,5 @@ end
 --   "This is secomd slide"
 -- })
 
-M.start_presentation { bufnr = 49 }
+-- M.start_presentation { bufnr = 11 }
 return M
