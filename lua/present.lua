@@ -17,15 +17,12 @@ local function get_theme_bg()
   return 0x1e1e1e
 end
 
-local function create_floating_window(config)
-  -- Create a buffer
+local function create_floating_window(config, enter)
   local buf = vim.api.nvim_create_buf(false, true)
-
-  -- Create a  floating window
-  local win = vim.api.nvim_open_win(buf, true, config)
-
+  local win = vim.api.nvim_open_win(buf, enter or false, config)
   return { buf = buf, win = win }
 end
+
 
 M.setup = function()
 end
@@ -73,6 +70,9 @@ local create_window_configuration = function()
   local width = vim.o.columns
   local height = vim.o.lines
 
+  local header_height = 1 + 2                                    -- 1 + border
+  local footer_height = 1                                        -- 1, no border
+  local body_height = height - header_height - footer_height - 2 -- 2 is for bottom border
   return {
     background = {
       relative = "editor",
@@ -96,14 +96,42 @@ local create_window_configuration = function()
     body = {
       relative = "editor",
       width = width - 8,
-      height = height - 4,
+      height = body_height,
       style = "minimal",
       border = { " ", " ", " ", " ", " ", "", " ", " ", },
       col = 8,
       row = 3,
     },
-    --footer = {}
+    footer = {
+      relative = "editor",
+      width = width,
+      height = footer_height,
+      style = "minimal",
+      border = { " ", "─", " ", "", "", "", "", "", },
+      col = 0,
+      row = height - 1,
+      zindex = 2,
+    },
   }
+end
+
+local state = {
+  parsed = {},
+  current_slide = 1,
+  floats = {},
+  title = ''
+}
+
+local foreach_float = function(cb)
+  for name, float in pairs(state.floats) do
+    cb(name, float)
+  end
+end
+
+local present_keymap = function(key, cb)
+  vim.keymap.set("n", key, cb, {
+    buffer = state.floats.body.buf
+  })
 end
 
 M.start_presentation = function(opts)
@@ -111,52 +139,56 @@ M.start_presentation = function(opts)
   opts.bufnr = opts.bufnr or 0
 
   local lines = vim.api.nvim_buf_get_lines(opts.bufnr, 0, -1, false)
-  local parsed = parsed_slides(lines)
-  local km = vim.keymap
-  local current_slide = 1
+  state.parsed = parsed_slides(lines)
+  state.current_slide = 1
+  state.title = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(opts.bufnr), ":t")
 
   local windows = create_window_configuration()
 
-  local background_float = create_floating_window(windows.background)
-  local header_float = create_floating_window(windows.header)
-  local body_float = create_floating_window(windows.body)
+  state.floats.background = create_floating_window(windows.background)
+  state.floats.header = create_floating_window(windows.header)
+  state.floats.body = create_floating_window(windows.body, true)
+  state.floats.footer = create_floating_window(windows.footer)
 
-  vim.bo[header_float.buf].filetype = "markdown"
-  vim.bo[body_float.buf].filetype = "markdown"
+  foreach_float(function(_, float)
+    vim.bo[float.buf].filetype = "markdown"
+  end)
 
   -- IN ORDER TO SET COLOR OF THE FLOATING WINDOW
   local slide_bg = get_theme_bg()
   vim.api.nvim_set_hl(1, "NORMALFLOAT", { bg = slide_bg })
-  vim.api.nvim_win_set_hl_ns(background_float.win, 1)
-  vim.api.nvim_win_set_hl_ns(header_float.win, 1)
-  vim.api.nvim_win_set_hl_ns(body_float.win, 1)
+  foreach_float(function(_, float)
+    vim.api.nvim_win_set_hl_ns(float.win, 1)
+  end)
 
   local set_slide_content = function(idx)
-    local slide = parsed.slides[idx]
+    local width = vim.o.columns
+    local slide = state.parsed.slides[idx]
     local padding = string.rep(" ", (width - #slide.title) / 2)
     local title = padding .. slide.title
-    vim.api.nvim_buf_set_lines(header_float.buf, 0, -1, false, { title })
-    vim.api.nvim_buf_set_lines(body_float.buf, 0, -1, false, slide.body)
+    vim.api.nvim_buf_set_lines(state.floats.header.buf, 0, -1, false, { title })
+    vim.api.nvim_buf_set_lines(state.floats.body.buf, 0, -1, false, slide.body)
+    local footer = string.format(
+      " %d / %d | %s",
+      state.current_slide,
+      #state.parsed.slides,
+      state.title
+    )
+    vim.api.nvim_buf_set_lines(state.floats.footer.buf, 0, -1, false, { footer })
   end
-  km.set("n", "n", function()
-    current_slide = math.min(current_slide + 1, #parsed.slides)
-    set_slide_content(current_slide)
-  end, {
-    buffer = body_float.buf
-  })
+  present_keymap("n", function()
+    state.current_slide = math.min(state.current_slide + 1, #state.parsed.slides)
+    set_slide_content(state.current_slide)
+  end)
 
-  km.set("n", "p", function()
-    current_slide = math.max(current_slide - 1, 1)
-    set_slide_content(current_slide)
-  end, {
-    buffer = body_float.buf
-  })
+  present_keymap("p", function()
+    state.current_slide = math.max(state.current_slide - 1, 1)
+    set_slide_content(state.current_slide)
+  end)
 
-  km.set("n", "q", function()
-    vim.api.nvim_win_close(body_float.win, true)
-  end, {
-    buffer = body_float.buf
-  })
+  present_keymap("q", function()
+    vim.api.nvim_win_close(state.floats.body.win, true)
+  end)
 
   local restore = {
     cmdheight = {
@@ -171,18 +203,36 @@ M.start_presentation = function(opts)
   end
 
   vim.api.nvim_create_autocmd("BufLeave", {
-    buffer = body_float.buf,
+    buffer = state.floats.body.buf,
     callback = function()
       -- Reset it back to the original setting
       for option, config in pairs(restore) do
         vim.opt[option] = config.original
       end
-      pcall(vim.api.nvim_win_close, header_float.win, true)
-      pcall(vim.api.nvim_win_close, background_float.win, true)
+      foreach_float(function(_, float)
+        pcall(vim.api.nvim_win_close, float.win, true)
+      end)
     end
   })
 
-  set_slide_content(current_slide)
+  vim.api.nvim_create_autocmd("VimResized", {
+    group = vim.api.nvim_create_augroup("present-resized", {}),
+    callback = function()
+      if not vim.api.nvim_win_is_valid(state.floats.body.win) or state.floats.body.win == nil then
+        return
+      end
+      local updated = create_window_configuration()
+      foreach_float(function(name, _)
+        vim.api.nvim_win_set_config(state.floats[name].win, updated[name])
+      end)
+      foreach_float(function(_, float)
+        vim.api.nvim_win_set_hl_ns(float.win, 1)
+      end)
+      -- Re-calculates  current slide content
+      set_slide_content(state.current_slide)
+    end
+  })
+  set_slide_content(state.current_slide)
 end
 -- vim.print(parsed_slides {
 --   "#hello",
@@ -192,5 +242,7 @@ end
 --   "This is secomd slide"
 -- })
 
-M.start_presentation { bufnr = 36 }
+-- M.start_presentation { bufnr = 223 }
+M._parsed_slides = parsed_slides
+
 return M
