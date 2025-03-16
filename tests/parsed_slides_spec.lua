@@ -8,6 +8,7 @@ describe("present.parsed_slides", function()
         {
           title = '',
           body = {},
+          blocks = {},
         }
       }
     }, parse {})
@@ -20,8 +21,36 @@ describe("present.parsed_slides", function()
           body = {
             "world",
           },
+          blocks = {}
         }
       }
     }, parse { '# hellow', 'world' })
+  end)
+  it("Should parse a file with one slide and one block", function()
+    local results = parse {
+      "# This is the title",
+      " This is body",
+      "```lua",
+      "print('hi')",
+      "```"
+    }
+
+    -- Should only have one slide
+    eq(1, #results.slides)
+
+    local slide = results.slides[1]
+    eq('# This is the title', slide.title)
+
+    eq({
+      " This is body",
+      "```lua",
+      "print('hi')",
+      "```"
+    }, slide.body)
+
+    eq({
+      language = "lua",
+      body = "print('hi')"
+    }, slide.blocks[1])
   end)
 end)
